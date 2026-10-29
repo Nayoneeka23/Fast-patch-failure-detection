@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>mini-swe-agent Loop</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: sticky stepper bar; left = loop diagram, narration, code; right = the message history the model reads */
+:root {
+  --bg: #F3F5F8;
+  --surface: #FFFFFF;
+  --sunken: #EAEEF3;
+  --fg: #151A22;
+  --muted: #5B6575;
+  --line: #DCE1E8;
+  --line-strong: #B9C1CC;
+  --agent: #2563C9;
+  --agent-soft: #E3ECFA;
+  --on-agent: #FFFFFF;
+  --env: #B05A16;
+  --env-soft: #FBEBDC;
+  --ok: #2B7A4B;
+  --ok-soft: #E2F2E8;
+  --code-bg: #F7F8FA;
+  --font-sans: "IBM Plex Sans", "Segoe UI", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151B; --surface: #181E26; --sunken: #0E1217; --fg: #E5E8EE; --muted: #98A2B1;
+    --line: #29313C; --line-strong: #46505E; --agent: #7AB2FF; --agent-soft: #1A2A40; --on-agent: #0B1420;
+    --env: #F0A35C; --env-soft: #33251A; --ok: #6CC08B; --ok-soft: #17301F; --code-bg: #0F1318;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151B; --surface: #181E26; --sunken: #0E1217; --fg: #E5E8EE; --muted: #98A2B1;
+  --line: #29313C; --line-strong: #46505E; --agent: #7AB2FF; --agent-soft: #1A2A40; --on-agent: #0B1420;
+  --env: #F0A35C; --env-soft: #33251A; --ok: #6CC08B; --ok-soft: #17301F; --code-bg: #0F1318;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 48px;
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px);
+  z-index: 10; background: var(--bg);
+}
+.wrap { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+
+header.intro { padding-top: 36px; display: flex; flex-direction: column; gap: 8px; max-width: 760px; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0; }
+h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.12; margin: 0; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+.lede { margin: 0; color: var(--muted); font-size: 16px; max-width: 64ch; }
+.lede b { color: var(--fg); font-weight: 600; }
+.key { display: inline-flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.key span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+/* Stepper bar */
+.bar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--bg); border-bottom: 1px solid var(--line);
+  padding-block: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  font: 500 13px var(--font-sans); color: var(--muted); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; cursor: pointer;
+}
+.chip:hover { border-color: var(--line-strong); color: var(--fg); }
+.chip.on { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.chip.done { color: var(--fg); }
+.phases { display: flex; gap: 4px; align-items: center; font: 12px var(--font-mono); color: var(--muted); }
+.phases span { padding: 3px 8px; border-radius: 6px; }
+.phases span.on { background: var(--sunken); color: var(--fg); font-weight: 500; }
+.phases i { font-style: normal; opacity: 0.5; }
+.buttons { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.count { font: 12px var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.btn {
+  font: 600 14px var(--font-sans); padding: 8px 14px; border-radius: 8px; cursor: pointer;
+  background: var(--surface); color: var(--fg); border: 1px solid var(--line-strong);
+}
+.btn:hover:not(:disabled) { border-color: var(--fg); }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn.primary { background: var(--agent); color: var(--on-agent); border-color: var(--agent); }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.08); border-color: var(--agent); }
+button:focus-visible { outline: 2px solid var(--agent); outline-offset: 2px; }
+
+/* Main grid */
+.layout {
+  display: grid; gap: 20px; align-items: start;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+  grid-template-areas: "diagram history" "narr history" "code history";
+}
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; min-width: 0; }
+.panel-h { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.panel-h h2 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.panel-h .meta { font: 12px var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.diagram { grid-area: diagram; padding: 8px; }
+.diagram svg { width: 100%; height: auto; display: block; }
+.node rect { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.5; transition: fill .25s, stroke .25s; }
+.node.active.agent rect { fill: var(--agent-soft); stroke: var(--agent); stroke-width: 2.5; }
+.node.active.env rect { fill: var(--env-soft); stroke: var(--env); stroke-width: 2.5; }
+.node.active.neutral rect { fill: var(--sunken); stroke: var(--fg); stroke-width: 2.5; }
+.node.active.ok rect { fill: var(--ok-soft); stroke: var(--ok); stroke-width: 2.5; }
+.node.idle-done rect { stroke-dasharray: 4 4; }
+.t-title { fill: var(--fg); font: 600 15px var(--font-sans); }
+.t-sub { fill: var(--muted); font: 12px var(--font-mono); }
+.t-edge { fill: var(--muted); font: 12px var(--font-sans); }
+.t-center { fill: var(--fg); font: 700 22px var(--font-sans); }
+.t-center-sub { fill: var(--muted); font: 12px var(--font-mono); }
+.edge { stroke: var(--line-strong); stroke-width: 2; fill: none; transition: stroke .25s; }
+.edge.active { stroke-width: 2.5; stroke-dasharray: 7 5; animation: flow .7s linear infinite; }
+.edge.active[data-c="agent"] { stroke: var(--agent); }
+.edge.active[data-c="env"] { stroke: var(--env); }
+.edge.active[data-c="ok"] { stroke: var(--ok); }
+.ah-idle { fill: var(--line-strong); }
+.ah-agent { fill: var(--agent); }
+.ah-env { fill: var(--env); }
+.ah-ok { fill: var(--ok); }
+@keyframes flow { to { stroke-dashoffset: -12; } }
+
+.narr { grid-area: narr; padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 10px; }
+.tag { font: 500 12px var(--font-mono); letter-spacing: 0.04em; color: var(--muted); margin: 0; text-transform: uppercase; }
+.tag b { color: var(--tagc, var(--fg)); font-weight: 600; }
+.narr h3 { margin: 0; font-size: 22px; line-height: 1.25; text-wrap: balance; }
+.narr p.body { margin: 0; max-width: 62ch; }
+.narr p.why { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--sunken); max-width: 62ch; }
+.detail-label { font: 12px var(--font-mono); color: var(--muted); margin: 4px 0 0; }
+pre {
+  margin: 0; font: 13px/1.5 var(--font-mono); background: var(--code-bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 12px; overflow-x: auto; white-space: pre; color: var(--fg);
+}
+.tagtxt { color: var(--muted); }
+.okc { color: var(--ok); font-weight: 500; }
+.errc { color: var(--env); font-weight: 500; }
+
+.code { grid-area: code; }
+.code pre { border: 0; border-radius: 0 0 12px 12px; padding: 10px 0; background: var(--code-bg); }
+.ln { display: block; padding: 0 14px 0 0; border-left: 3px solid transparent; transition: background .2s; }
+.ln .no { display: inline-block; width: 34px; text-align: right; margin-right: 14px; color: var(--muted); opacity: 0.6; user-select: none; }
+.ln.hl { background: var(--agent-soft); border-left-color: var(--agent); }
+.ln.hl.env { background: var(--env-soft); border-left-color: var(--env); }
+.ln.hl.ok { background: var(--ok-soft); border-left-color: var(--ok); }
+.kw { color: var(--agent); font-weight: 500; }
+.cm { color: var(--muted); font-style: italic; }
+.st { color: var(--env); }
+.code .foot { margin: 0; padding: 10px 16px 12px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); }
+
+.history {
+  grid-area: history; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 76px);
+  display: flex; flex-direction: column; max-height: calc(100vh - 96px); min-height: 520px;
+}
+.msgs { position: relative; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+.msg { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); transition: box-shadow .25s, border-color .25s, opacity .25s; }
+.msg .role { display: flex; justify-content: space-between; gap: 8px; padding: 7px 12px; font: 500 12px var(--font-mono); color: var(--muted); border-bottom: 1px solid var(--line); }
+.msg .role b { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.msg .content { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.msg .content p { margin: 0; }
+.msg pre { font-size: 12.5px; }
+.msg.system .content, .msg.task .content { font-size: 13.5px; }
+.msg.assistant { border-left: 3px solid var(--agent); }
+.msg.assistant .role b { color: var(--agent); }
+.msg.obs { border-left: 3px solid var(--env); }
+.msg.obs .role b { color: var(--env); }
+.msg.focus { border-color: var(--fg); box-shadow: 0 0 0 3px var(--sunken); }
+.msg.assistant.focus { border-color: var(--agent); border-left-color: var(--agent); }
+.msg.obs.focus { border-color: var(--env); }
+.msg.old { opacity: 0.72; }
+.thought { font-size: 14px; }
+.thought b { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.04em; }
+.bash .cmdline { transition: background .25s; border-radius: 3px; }
+.bash.pick .cmdline { background: var(--env-soft); outline: 1px solid var(--env); }
+.msg.new { animation: rise .35s ease-out; }
+@keyframes rise { from { transform: translateY(8px); opacity: 0.2; } to { transform: none; opacity: 1; } }
+
+/* Edge cases */
+.cases h2 { margin: 12px 0 4px; font-size: 20px; }
+.cases > p { margin: 0 0 12px; color: var(--muted); max-width: 64ch; }
+.case-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.case { padding: 16px; display: flex; flex-direction: column; gap: 6px; }
+.case h3 { margin: 0; font-size: 15px; }
+.case p { margin: 0; color: var(--muted); font-size: 14px; }
+.case code { font-family: var(--font-mono); font-size: 12.5px; color: var(--fg); }
+.note { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+
+@media (max-width: 860px) {
+  .layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "diagram" "narr" "history" "code"; }
+  .history { position: static; max-height: none; min-height: 0; }
+  .msgs { max-height: 460px; }
+  .buttons { margin-left: 0; width: 100%; }
+  .buttons .count { margin-right: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .edge.active { animation: none; stroke-dasharray: none; }
+  .msg.new { animation: none; }
+  * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="intro">
+    <p class="eyebrow">mini-swe-agent · interactive walkthrough</p>
+    <h1>How an LLM agent fixes a bug, one turn at a time</h1>
+    <p class="lede">An agent is a <b>loop around a text model</b>. The model only ever writes text. A small harness turns that text into a shell command, runs it, and pastes the result back into the conversation. Step through a five-turn run below.</p>
+    <div class="key">
+      <span><i class="sw" style="background:var(--agent)"></i>The model (writes text)</span>
+      <span><i class="sw" style="background:var(--env)"></i>The environment (runs commands)</span>
+      <span><i class="sw" style="background:var(--ok)"></i>Exit</span>
+    </div>
+  </header>
+
+  <div class="bar" role="toolbar" aria-label="Walkthrough controls">
+    <div class="chips" id="chips"></div>
+    <div class="phases" id="phases" aria-live="polite"></div>
+    <div class="buttons">
+      <span class="count" id="count"></span>
+      <button class="btn" id="prev" type="button" aria-label="Previous step">← Back</button>
+      <button class="btn" id="play" type="button">Play</button>
+      <button class="btn primary" id="next" type="button">Next →</button>
+    </div>
+  </div>
+
+  <main class="layout">
+    <section class="panel diagram" aria-label="The agent loop">
+      <svg viewBox="0 0 520 340" role="img" aria-label="Loop: message history to LLM to parse to shell, then back to message history; on submit, return the patch">
+        <defs>
+          <marker id="ah-idle" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-idle" d="M0,0 L10,5 L0,10 z"/></marker>
+          <marker id="ah-agent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-agent" d="M0,0 L10,5 L0,10 z"/></marker>
+          <marker id="ah-env" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-env" d="M0,0 L10,5 L0,10 z"/></marker>
+          <marker id="ah-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-ok" d="M0,0 L10,5 L0,10 z"/></marker>
+        </defs>
+
+        <path class="edge" id="e-m2l" data-c="agent" d="M112,196 L112,97" marker-end="url(#ah-idle)"/>
+        <path class="edge" id="e-l2p" data-c="agent" d="M200,59 L317,59" marker-end="url(#ah-idle)"/>
+        <path class="edge" id="e-p2e" data-c="env" d="M408,94 L408,193" marker-end="url(#ah-idle)"/>
+        <path class="edge" id="e-e2m" data-c="env" d="M320,231 L203,231" marker-end="url(#ah-idle)"/>
+        <path class="edge" id="e-exit" data-c="ok" d="M408,266 L408,295" marker-end="url(#ah-idle)"/>
+
+        <text class="t-edge" x="120" y="150">full history</text>
+        <text class="t-edge" x="260" y="49" text-anchor="middle">reply</text>
+        <text class="t-edge" x="400" y="150" text-anchor="end">one command</text>
+        <text class="t-edge" x="260" y="252" text-anchor="middle">exit code + output</text>
+
+        <g class="node agent" id="n-llm">
+          <rect x="24" y="24" width="176" height="70" rx="12"/>
+          <text class="t-title" x="112" y="54" text-anchor="middle">LLM</text>
+          <text class="t-sub" x="112" y="74" text-anchor="middle">model.query()</text>
+        </g>
+        <g class="node neutral" id="n-parse">
+          <rect x="320" y="24" width="176" height="70" rx="12"/>
+          <text class="t-title" x="408" y="54" text-anchor="middle">Parse</text>
+          <text class="t-sub" x="408" y="74" text-anchor="middle">find 1 bash block</text>
+        </g>
+        <g class="node env" id="n-exec">
+          <rect x="320" y="196" width="176" height="70" rx="12"/>
+          <text class="t-title" x="408" y="226" text-anchor="middle">Shell</text>
+          <text class="t-sub" x="408" y="246" text-anchor="middle">subprocess.run()</text>
+        </g>
+        <g class="node neutral" id="n-msgs">
+          <rect x="24" y="196" width="176" height="70" rx="12"/>
+          <text class="t-title" x="112" y="226" text-anchor="middle">Message history</text>
+          <text class="t-sub" x="112" y="246" text-anchor="middle" id="msgs-sub">2 messages</text>
+        </g>
+        <g class="node ok" id="n-done">
+          <rect x="340" y="298" width="136" height="34" rx="17"/>
+          <text class="t-sub" x="408" y="320" text-anchor="middle" style="fill:var(--fg)">return patch</text>
+        </g>
+
+        <text class="t-center" x="260" y="140" text-anchor="middle" id="c-turn">Ready</text>
+        <text class="t-center-sub" x="260" y="162" text-anchor="middle" id="c-sub">turn 0 of 5</text>
+      </svg>
+    </section>
+
+    <section class="panel narr" aria-live="polite" id="narr"></section>
+
+    <section class="panel code" aria-label="Agent code">
+      <div class="panel-h"><h2>The whole agent</h2><span class="meta">agent.py</span></div>
+      <pre id="code"></pre>
+      <p class="foot">A simplified sketch of mini-swe-agent’s main loop. The real one adds step and cost limits, timeouts and error messages, but the shape is the same.</p>
+    </section>
+
+    <section class="panel history" aria-label="Message history">
+      <div class="panel-h"><h2>What the model sees</h2><span class="meta" id="hist-meta"></span></div>
+      <div class="msgs" id="msgs"></div>
+    </section>
+  </main>
+
+  <section class="cases">
+    <h2>When a turn goes wrong</h2>
+    <p>The loop does not crash on bad turns. Each problem becomes one more message, so the model can read what happened and correct itself on the next turn.</p>
+    <div class="case-grid">
+      <div class="panel case">
+        <h3>Wrong format</h3>
+        <p>The reply has no bash block, or two. Nothing runs. The harness appends a message telling the model to send <code>exactly ONE</code> bash block, and the loop continues.</p>
+      </div>
+      <div class="panel case">
+        <h3>Command hangs</h3>
+        <p>A command runs past the timeout (for example a server that never exits). It is killed and the model is told it timed out, with any partial output.</p>
+      </div>
+      <div class="panel case">
+        <h3>Run too long</h3>
+        <p>The run hits its step or cost limit before submitting. The loop stops and the run is recorded as unfinished, with no patch.</p>
+      </div>
+    </div>
+    <p class="note">The bug, file names and outputs here are an illustrative example, written in mini-swe-agent’s message format.</p>
+  </section>
+</div>
+
+<script>
+(function () {
+  var SUBMIT = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT";
+  var SYSTEM_TEXT = "You are a helpful assistant that can interact with a computer shell to solve programming tasks.\nYour response must contain exactly ONE bash code block with ONE command.\nInclude a THOUGHT section before your command explaining your reasoning.\nWhen done, run: echo " + SUBMIT + " && git diff";
+  var TASK_TEXT = "<pr_description>\nslugify('') raises IndexError: string index out of range.\nEmpty input should return an empty string.\n</pr_description>\n\nThe repository is in the current directory. Fix the bug in the source code.";
+
+  var TURNS = [
+    { thought: "First, find where slugify is defined.",
+      cmd: 'grep -rn "def slugify" src/', rc: 0,
+      out: "src/utils/text.py:12:def slugify(s):",
+      why: "Nothing has run yet. The model only has the task text, so it starts by locating the function.",
+      run: "grep finds one match. Exit code 0 means the command succeeded." },
+    { thought: "Reproduce the bug before changing anything.",
+      cmd: "python -c \"from src.utils.text import slugify; slugify('')\"", rc: 1,
+      out: "Traceback (most recent call last):\n  File \"src/utils/text.py\", line 14, in slugify\n    first = s[0]\nIndexError: string index out of range",
+      why: "The last output told it where slugify lives. Before editing, it checks that the bug really happens.",
+      run: "Python crashes with exit code 1. The traceback names the exact line, which is what the model needs to read next." },
+    { thought: "Line 14 reads s[0] with no guard. Handle empty input.",
+      cmd: "sed -i 's/s\\[0\\]/(s[0] if s else \"\")/' src/utils/text.py", rc: 0,
+      out: "",
+      why: "The traceback pointed at s[0] on line 14. The model infers the cause and edits the file in place with sed.",
+      run: "sed prints nothing when it succeeds. Exit code 0 is the only sign the edit worked." },
+    { thought: "Verify the fix and check nothing else broke.",
+      cmd: "python -m pytest tests/test_text.py -q", rc: 0,
+      out: "......                                   [100%]\n6 passed in 0.04s",
+      why: "The edit printed nothing, and silence is not proof. It runs the tests to check.",
+      run: "pytest reports 6 passed. The fix holds and nothing else broke." },
+    { thought: "Tests pass. Submit the change.",
+      cmd: "echo " + SUBMIT + " && git diff", rc: 0,
+      out: SUBMIT + "\ndiff --git a/src/utils/text.py b/src/utils/text.py\n@@ -14 +14 @@ def slugify(s):\n-    first = s[0]\n+    first = (s[0] if s else \"\")",
+      why: "All tests pass. The model decides the task is done and sends the submit command.",
+      run: "echo prints the submit string first, then git diff prints the change." }
+  ];
+
+  var PHASE_LABEL = { query: "Read & reply", parse: "Parse", execute: "Run", observe: "Append", finish: "Submit" };
+  var STEPS = [{ phase: "setup", turn: 0 }];
+  TURNS.forEach(function (t, i) {
+    var n = i + 1;
+    ["query", "parse", "execute", n === TURNS.length ? "finish" : "observe"].forEach(function (p) {
+      STEPS.push({ phase: p, turn: n });
+    });
+  });
+
+  var CODE = [
+    '<span class="kw">def</span> run(task):',
+    '    messages = [system(PROMPT), user(task)]',
+    '    <span class="kw">while</span> <span class="kw">True</span>:',
+    '        reply = model.query(messages)',
+    '        messages.append(assistant(reply))',
+    '        cmd = parse_one_bash_block(reply)',
+    '        out = subprocess.run(cmd, shell=<span class="kw">True</span>,',
+    '                  capture_output=<span class="kw">True</span>, timeout=<span class="st">60</span>)',
+    '        <span class="kw">if</span> first_line(out) == SUBMIT:',
+    '            <span class="kw">return</span> rest_of(out)  <span class="cm"># the patch</span>',
+    '        messages.append(user(render(out)))'
+  ];
+  var CODE_HL = {
+    setup: { lines: [2], tone: "" },
+    query: { lines: [4, 5], tone: "" },
+    parse: { lines: [6], tone: "" },
+    execute: { lines: [7, 8], tone: "env" },
+    observe: { lines: [9, 11], tone: "env" },
+    finish: { lines: [9, 10], tone: "ok" }
+  };
+  var DIAGRAM = {
+    setup: { node: "msgs", edge: null },
+    query: { node: "llm", edge: "m2l" },
+    parse: { node: "parse", edge: "l2p" },
+    execute: { node: "exec", edge: "p2e" },
+    observe: { node: "msgs", edge: "e2m" },
+    finish: { node: "done", edge: "exit" }
+  };
+
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+  function obsText(t) {
+    return "<returncode>" + t.rc + "</returncode>\n<output>\n" + (t.out ? t.out + "\n" : "") + "</output>";
+  }
+  function obsHTML(t) {
+    return '<span class="tagtxt">&lt;returncode&gt;</span><span class="' + (t.rc === 0 ? "okc" : "errc") + '">' + t.rc + '</span><span class="tagtxt">&lt;/returncode&gt;\n&lt;output&gt;</span>\n' +
+      (t.out ? esc(t.out) + "\n" : "") + '<span class="tagtxt">&lt;/output&gt;</span>';
+  }
+  function replyText(t) { return "THOUGHT: " + t.thought + "\n\n```bash\n" + t.cmd + "\n```"; }
+
+  function messagesAt(step) {
+    var list = [
+      { kind: "system", role: "system", label: "rules (abridged)", text: SYSTEM_TEXT },
+      { kind: "task", role: "user", label: "the task", text: TASK_TEXT }
+    ];
+    for (var k = 1; k <= step.turn; k++) {
+      var t = TURNS[k - 1];
+      var current = k === step.turn;
+      if (current && step.phase === "setup") break;
+      list.push({ kind: "assistant", role: "assistant", label: "turn " + k, turn: k, text: replyText(t), t: t });
+      if (!current || step.phase === "observe") {
+        list.push({ kind: "obs", role: "user", label: "observation " + k, turn: k, text: obsText(t), t: t });
+      }
+    }
+    return list;
+  }
+
+  function tokens(list) {
+    var c = 0; list.forEach(function (m) { c += m.text.length; });
+    return Math.round(c / 4);
+  }
+
+  var el = {
+    chips: document.getElementById("chips"), phases: document.getElementById("phases"),
+    count: document.getElementById("count"), prev: document.getElementById("prev"),
+    next: document.getElementById("next"), play: document.getElementById("play"),
+    narr: document.getElementById("narr"), code: document.getElementById("code"),
+    msgs: document.getElementById("msgs"), histMeta: document.getElementById("hist-meta"),
+    msgsSub: document.getElementById("msgs-sub"), cTurn: document.getElementById("c-turn"), cSub: document.getElementById("c-sub")
+  };
+
+  // chips
+  var chipLabels = ["Setup"].concat(TURNS.map(function (_, i) { return "Turn " + (i + 1); }));
+  chipLabels.forEach(function (label, turn) {
+    var b = document.createElement("button");
+    b.type = "button"; b.className = "chip"; b.textContent = label; b.id = "chip-" + turn;
+    b.addEventListener("click", function () {
+      stop();
+      for (var i = 0; i < STEPS.length; i++) if (STEPS[i].turn === turn) { go(i); return; }
+    });
+    el.chips.appendChild(b);
+  });
+
+  var idx = 0, prevCount = 0, timer = null;
+
+  function renderNarr(step, list) {
+    var p = step.phase, t = TURNS[step.turn - 1], html = "", tagc = "var(--fg)";
+    var tag = step.turn ? "Turn " + step.turn + " · " : "";
+    if (p === "setup") {
+      html = '<p class="tag"><b>Setup</b></p><h3>Start with two messages</h3>' +
+        '<p class="body">The run begins with a system prompt that sets the rules, and the task. This list of messages is the agent’s entire memory. On every turn the model rereads all of it from the top.</p>' +
+        '<p class="why">The model never touches files or a terminal itself. It can only write text, so the system prompt tells it which text the harness will act on: one bash block per reply.</p>';
+    } else if (p === "query") {
+      tagc = "var(--agent)";
+      var sent = list.slice(0, list.length - 1);
+      html = '<p class="tag">' + tag + '<b>' + PHASE_LABEL[p] + '</b></p><h3>The model reads the history and replies</h3>' +
+        '<p class="body"><code>model.query()</code> sends all ' + sent.length + ' messages, about ' + tokens(sent).toLocaleString("en-US") + ' tokens. The model writes a THOUGHT and one command. Its reply is appended to the history.</p>' +
+        '<p class="why">' + esc(t.why) + '</p>';
+    } else if (p === "parse") {
+      html = '<p class="tag">' + tag + '<b>' + PHASE_LABEL[p] + '</b></p><h3>The harness pulls out one command</h3>' +
+        '<p class="body">A regex looks for exactly one <code>```bash</code> block in the reply. With zero or two blocks it would run nothing and reply with a format error instead.</p>' +
+        '<p class="detail-label">Extracted command</p><pre>' + esc(t.cmd) + '</pre>';
+    } else if (p === "execute") {
+      tagc = "var(--env)";
+      html = '<p class="tag">' + tag + '<b>' + PHASE_LABEL[p] + '</b></p><h3>The shell runs it</h3>' +
+        '<p class="body">Each command runs in a fresh shell with a timeout. Only files on disk carry over between turns, so a <code>cd</code> in one turn is forgotten in the next.</p>' +
+        '<p class="why">' + esc(t.run) + '</p>' +
+        '<p class="detail-label">Terminal</p><pre>$ ' + esc(t.cmd) + "\n" + (t.out ? esc(t.out) + "\n" : "") + '<span class="' + (t.rc === 0 ? "okc" : "errc") + '">[exit ' + t.rc + ']</span></pre>';
+    } else if (p === "observe") {
+      tagc = "var(--env)";
+      html = '<p class="tag">' + tag + '<b>' + PHASE_LABEL[p] + '</b></p><h3>The output goes back into the history</h3>' +
+        '<p class="body">The first line of output is not the submit string, so line 9 does not match. The exit code and output are wrapped in tags and appended as message ' + list.length + ', with the role <code>user</code>. The model reads it on the next turn.</p>' +
+        '<p class="detail-label">Appended message</p><pre>' + obsHTML(t) + '</pre>';
+    } else if (p === "finish") {
+      tagc = "var(--ok)";
+      html = '<p class="tag">' + tag + '<b>' + PHASE_LABEL[p] + '</b></p><h3>Submit string seen, the loop ends</h3>' +
+        '<p class="body">The first line of output is <code>' + SUBMIT + '</code>, so line 9 matches and the function returns. Everything after it, the git diff, is the agent’s answer. An evaluator such as SWE-bench then runs its own tests on that patch.</p>' +
+        '<p class="detail-label">Final patch</p><pre>' + esc(t.out.split("\n").slice(1).join("\n")) + '</pre>';
+    }
+    el.narr.style.setProperty("--tagc", tagc);
+    el.narr.innerHTML = html;
+  }
+
+  function renderMsgs(step, list) {
+    var focusIdx;
+    if (step.phase === "setup") focusIdx = 1;
+    else focusIdx = list.length - 1;
+    var html = "";
+    list.forEach(function (m, i) {
+      var cls = "msg " + m.kind;
+      if (i === focusIdx) cls += " focus";
+      else if (step.phase !== "setup") cls += " old";
+      if (i >= prevCount && prevCount > 0) cls += " new";
+      var body;
+      if (m.kind === "assistant") {
+        var pick = (i === focusIdx && (step.phase === "parse" || step.phase === "execute" || step.phase === "finish")) ? " pick" : "";
+        body = '<p class="thought"><b>THOUGHT:</b> ' + esc(m.t.thought) + '</p>' +
+          '<pre class="bash' + pick + '"><span class="tagtxt">```bash</span>\n<span class="cmdline">' + esc(m.t.cmd) + '</span>\n<span class="tagtxt">```</span></pre>';
+      } else if (m.kind === "obs") {
+        body = '<pre>' + obsHTML(m.t) + '</pre>';
+      } else {
+        body = '<pre style="white-space:pre-wrap">' + esc(m.text) + '</pre>';
+      }
+      html += '<article class="' + cls + '"><div class="role"><b>' + m.role + '</b><span>#' + (i + 1) + ' · ' + m.label + '</span></div><div class="content">' + body + '</div></article>';
+    });
+    el.msgs.innerHTML = html;
+    prevCount = list.length;
+    var f = el.msgs.querySelector(".msg.focus");
+    if (f) {
+      var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      try { el.msgs.scrollTo({ top: Math.max(0, f.offsetTop - 12), behavior: reduce ? "auto" : "smooth" }); }
+      catch (e) { el.msgs.scrollTop = Math.max(0, f.offsetTop - 12); }
+    }
+    el.histMeta.textContent = list.length + " messages · ≈" + tokens(list).toLocaleString("en-US") + " tokens";
+  }
+
+  function renderCode(step) {
+    var h = CODE_HL[step.phase];
+    el.code.innerHTML = CODE.map(function (line, i) {
+      var on = h.lines.indexOf(i + 1) !== -1;
+      return '<span class="ln' + (on ? " hl " + h.tone : "") + '"><span class="no">' + (i + 1) + '</span>' + line + '</span>';
+    }).join("");
+  }
+
+  function renderDiagram(step, list) {
+    var d = DIAGRAM[step.phase];
+    ["llm", "parse", "exec", "msgs", "done"].forEach(function (n) {
+      document.getElementById("n-" + n).classList.toggle("active", d.node === n);
+    });
+    ["m2l", "l2p", "p2e", "e2m", "exit"].forEach(function (e) {
+      var p = document.getElementById("e-" + e), on = d.edge === e;
+      p.classList.toggle("active", on);
+      p.setAttribute("marker-end", "url(#ah-" + (on ? p.getAttribute("data-c") : "idle") + ")");
+    });
+    el.msgsSub.textContent = list.length + " messages";
+    if (step.phase === "setup") { el.cTurn.textContent = "Ready"; el.cSub.textContent = "turn 0 of " + TURNS.length; }
+    else if (step.phase === "finish") { el.cTurn.textContent = "Done"; el.cSub.textContent = TURNS.length + " turns"; }
+    else { el.cTurn.textContent = "Turn " + step.turn; el.cSub.textContent = "of " + TURNS.length; }
+  }
+
+  function renderBar(step) {
+    chipLabels.forEach(function (_, turn) {
+      var c = document.getElementById("chip-" + turn);
+      c.classList.toggle("on", turn === step.turn);
+      c.classList.toggle("done", turn < step.turn);
+      c.setAttribute("aria-current", turn === step.turn ? "step" : "false");
+    });
+    if (step.turn === 0) {
+      el.phases.innerHTML = '<span class="on">Setup</span>';
+    } else {
+      var ps = ["query", "parse", "execute", step.turn === TURNS.length ? "finish" : "observe"];
+      el.phases.innerHTML = ps.map(function (p) {
+        return '<span class="' + (p === step.phase ? "on" : "") + '">' + PHASE_LABEL[p] + '</span>';
+      }).join("<i>→</i>");
+    }
+    el.count.textContent = "Step " + (idx + 1) + " of " + STEPS.length;
+    el.prev.disabled = idx === 0;
+    el.next.disabled = idx === STEPS.length - 1;
+  }
+
+  function go(i) {
+    var back = i < idx;
+    idx = Math.max(0, Math.min(STEPS.length - 1, i));
+    var step = STEPS[idx], list = messagesAt(step);
+    if (back) prevCount = list.length;
+    renderBar(step); renderDiagram(step, list); renderNarr(step, list); renderCode(step); renderMsgs(step, list);
+    if (idx === STEPS.length - 1) stop();
+  }
+
+  function stop() { if (timer) { clearInterval(timer); timer = null; } el.play.textContent = idx === STEPS.length - 1 ? "Replay" : "Play"; }
+  function play() {
+    if (timer) { stop(); return; }
+    if (idx === STEPS.length - 1) { prevCount = 0; go(0); }
+    el.play.textContent = "Pause";
+    timer = setInterval(function () { if (idx < STEPS.length - 1) go(idx + 1); else stop(); }, 2600);
+  }
+
+  el.prev.addEventListener("click", function () { stop(); go(idx - 1); });
+  el.next.addEventListener("click", function () { stop(); go(idx + 1); });
+  el.play.addEventListener("click", play);
+  document.addEventListener("keydown", function (e) {
+    if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+    if (e.key === "ArrowRight") { stop(); go(idx + 1); e.preventDefault(); }
+    else if (e.key === "ArrowLeft") { stop(); go(idx - 1); e.preventDefault(); }
+  });
+
+  // Open on turn 2 so the first view shows a history with real content.
+  prevCount = 99;
+  go(6);
+})();
+</script>
+</body>
+</html>

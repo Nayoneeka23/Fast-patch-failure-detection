@@ -1,0 +1,15 @@
+Hi! Please read CLAUDE.md in this repo fully — it contains my whole project description, the supervisor's slides, the dataset, the decisions we made, the environment rules and the roadmap.
+
+Today we do ONLY Step 0 (environment check). Nothing from Step 1 or later.
+
+1. First, in plain words, tell me what you understood about the project in 5–6 lines, so I can check you got it right.
+2. Then explain what you plan to check and set up for Step 0, and wait for my OK.
+3. After my OK:
+   - check my Python version and that I'm inside the git repo
+   - check that .gitignore exists with the correct name and ignores venvs, data/ and models
+   - use the existing environment at C:\Users\nayon\venvs\fastpatch (outside the repo, because the repo is in OneDrive). Do NOT create a .venv inside the repo, and never install anything globally
+   - install requirements.txt inside that environment
+   - check that sklearn, pandas, numpy, pyarrow and datasets import correctly and print their versions
+   - tell me how to make sure VS Code uses C:\Users\nayon\venvs\fastpatch\Scripts\python.exe as its interpreter
+4. If anything fails (especially on Python 3.14), stop and tell me — don't try fixes on your own.
+5. At the end, summarise what was done, what I should check, and suggest a commit message. Then stop and wait.
